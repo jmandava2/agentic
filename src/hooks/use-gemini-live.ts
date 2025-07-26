@@ -75,22 +75,27 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
 
   const handleMessage = useCallback(
     (message: any) => {
-      if (message.text) {
-        setTranscript(message.text);
-        onTranscript?.(message.text);
-      }
+      const modelTurn = message.serverContent?.modelTurn;
+      if (modelTurn) {
+        const textPart = modelTurn.parts.find((p: any) => p.text);
+        if (textPart) {
+          setTranscript(textPart.text);
+          onTranscript?.(textPart.text);
+        }
 
-      if (message.audio) {
-        const audioContext = audioContextRef.current;
-        if (audioContext && message.audio.audioData) {
-          const audioData = new Uint8Array(message.audio.audioData).buffer;
-          audioContext
-            .decodeAudioData(audioData)
-            .then((decodedData) => {
-              audioQueueRef.current.push(decodedData);
-              processAudioQueue();
-            })
-            .catch((e) => console.error('Error decoding audio data', e));
+        const audioPart = modelTurn.parts.find((p: any) => p.audio);
+        if (audioPart) {
+          const audioContext = audioContextRef.current;
+          if (audioContext && audioPart.audioData) {
+            const audioData = new Uint8Array(audioPart.audioData).buffer;
+            audioContext
+              .decodeAudioData(audioData)
+              .then((decodedData) => {
+                audioQueueRef.current.push(decodedData);
+                processAudioQueue();
+              })
+              .catch((e) => console.error('Error decoding audio data', e));
+          }
         }
       }
     },
@@ -99,6 +104,10 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
 
   const handleError = useCallback(
     (error: any) => {
+      if (error && error.message && error.message.includes('WebSocket')) {
+         // Silently ignore WebSocket closure errors that happen during normal operation
+        return;
+      }
       console.error('Gemini Live Error:', error);
       toast({
         variant: 'destructive',
@@ -140,7 +149,7 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
         audioContextRef.current &&
         audioContextRef.current.state !== 'closed'
       ) {
-        audioContextRef.current.close().catch(console.error);
+        // Don't close the context here, as it may be needed for queued audio
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -150,6 +159,7 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     if (isListening || !geminiApiRef.current) return;
     setTranscript('');
     setFinalTranscript('');
+    audioQueueRef.current = [];
 
     try {
       if (audioContextRef.current?.state === 'suspended') {
@@ -174,7 +184,6 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
 
   const sendMessage = useCallback(
     (message: string) => {
-        // Text messages during an active audio stream is not supported in this implementation.
         console.warn("Sending text messages is not supported in this voice-only client.");
     },
     []
