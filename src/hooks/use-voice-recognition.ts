@@ -14,11 +14,14 @@ const navigationCommands: Record<string, string> = {
   'go to dashboard': '/dashboard',
   'open dashboard': '/dashboard',
   'show me the dashboard': '/dashboard',
+  'navigate to dashboard': '/dashboard',
   'go to market': '/market-advisory',
   'open market advisory': '/market-advisory',
   'check prices': '/market-advisory',
+  'navigate to market advisory': '/market-advisory',
   'go to schemes': '/schemes',
   'open schemes': '/schemes',
+  'navigate to schemes': '/schemes',
   'log out': '/',
   'sign out': '/',
 };
@@ -30,6 +33,7 @@ const actionCommands: Record<string, (actions: { openCamera: () => void, toast: 
     'go to profile': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
     'my account': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
     'open my account': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
+    'navigate to my account': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
 };
 
 // Global state management for voice overlay
@@ -60,6 +64,15 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
     (command: string) => {
       const lowerCaseCommand = command.toLowerCase().trim();
 
+      const actionCommand = Object.keys(actionCommands).find((key) => 
+        lowerCaseCommand.includes(key)
+      );
+
+      if (actionCommand) {
+        actionCommands[actionCommand]({ openCamera, toast });
+        return;
+      }
+
       const navCommand = Object.keys(navigationCommands).find((key) =>
         lowerCaseCommand.includes(key)
       );
@@ -76,15 +89,6 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
         return;
       }
       
-      const actionCommand = Object.keys(actionCommands).find((key) => 
-        lowerCaseCommand.includes(key)
-      );
-
-      if (actionCommand) {
-        actionCommands[actionCommand]({ openCamera, toast });
-        return;
-      }
-
       toast({
         variant: 'destructive',
         title: 'Command not recognized',
