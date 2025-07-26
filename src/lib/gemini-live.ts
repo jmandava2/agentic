@@ -12,8 +12,10 @@ export class GeminiLiveApi {
   private session?: any; // Using any since types might not be fully exported
   private options: GeminiLiveApiOptions;
   private isConnected = false;
+  private mediaRecorder?: MediaRecorder;
+  private mediaStream?: MediaStream;
 
-  constructor(opts: GeminiLiveApiOptions) {
+  constructor(opts: GeminiLiveaiOptions) {
     this.options = opts;
   }
 
@@ -48,9 +50,19 @@ export class GeminiLiveApi {
         model: 'gemini-2.0-flash-exp-0827',
         config: this.getConfig(),
         callbacks: {
-          onopen: () => {
+          onopen: async () => {
             console.log('🔌 Gemini Live connected');
             this.isConnected = true;
+            // Start streaming audio from the microphone
+            this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.mediaRecorder = new MediaRecorder(this.mediaStream);
+
+            this.mediaRecorder.ondataavailable = (event) => {
+              if (event.data.size > 0 && this.session) {
+                this.session.sendAudio(event.data);
+              }
+            };
+            this.mediaRecorder.start(100); // Send audio chunks every 100ms
           },
           onmessage: (message: any) => {
             console.log('📨 Received:', message);
@@ -65,6 +77,7 @@ export class GeminiLiveApi {
             console.log('🔌 Gemini Live disconnected:', event?.reason || 'Unknown reason');
             this.isConnected = false;
             this.session = undefined;
+            this.stopRecording();
           },
         },
       });
@@ -76,6 +89,12 @@ export class GeminiLiveApi {
   }
 
   stopRecording() {
+    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+        this.mediaRecorder.stop();
+    }
+    if (this.mediaStream) {
+        this.mediaStream.getTracks().forEach(track => track.stop());
+    }
     if (this.session) {
       this.session.close();
       this.session = undefined;
