@@ -46,7 +46,7 @@ export class GeminiLiveApi {
     }
     try {
       this.apiKey = await this.getApiKey();
-      this.ai = new GoogleGenAI(this.apiKey);
+      this.ai = new GoogleGenAI({ apiKey: this.apiKey });
       this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       this.session = await this.ai.getGenerativeModel({
