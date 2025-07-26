@@ -17,9 +17,10 @@ const navigationCommands: Record<string, string> = {
   'open dashboard': '/dashboard',
   'show me the dashboard': '/dashboard',
   'navigate to dashboard': '/dashboard',
+  'go to market advisory': '/market-advisory',
   'go to market': '/market-advisory',
-  'open market': '/market-advisory',
   'open market advisory': '/market-advisory',
+  'open market': '/market-advisory',
   'check prices': '/market-advisory',
   'navigate to market advisory': '/market-advisory',
   'navigate to market': '/market-advisory',
@@ -32,12 +33,15 @@ const navigationCommands: Record<string, string> = {
 
 const actionCommands: Record<
   string,
-  (actions: { openCamera: () => void; toast: any; onSend?: () => void }) => void
+  (actions: { openCamera: () => void; toast: any; onSend?: () => void }) => string | void
 > = {
   'open camera': ({ openCamera }) => openCamera(),
   'show camera': ({ openCamera }) => openCamera(),
   'launch camera': ({ openCamera }) => openCamera(),
-  'send message': ({ onSend }) => onSend?.(),
+  'send message': ({ onSend }) => {
+    onSend?.();
+    return 'send';
+  },
   'go to profile': ({ toast }) =>
     toast({
       title: 'Coming Soon',
@@ -59,6 +63,7 @@ const actionCommands: Record<
       description: 'The profile page is under construction.',
     }),
 };
+
 
 const listeners = new Set<(state: boolean) => void>();
 let isListeningGlobally = false;
@@ -85,7 +90,7 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   const processCommand = useCallback(
-    (command: string) => {
+    (command: string): boolean | 'send' => {
       const lowerCaseCommand = command.toLowerCase().trim();
 
       const navCommand = Object.keys(navigationCommands).find((key) =>
@@ -109,7 +114,8 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
       );
 
       if (actionCommand) {
-        actionCommands[actionCommand]({ openCamera, toast, onSend });
+        const result = actionCommands[actionCommand]({ openCamera, toast, onSend });
+        if (result === 'send') return 'send';
         return true;
       }
 
@@ -160,8 +166,8 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
         onMessage?.(currentTranscript);
 
         if (finalTranscript) {
-          const commandProcessed = processCommand(finalTranscript);
-          if (commandProcessed) {
+          const commandResult = processCommand(finalTranscript);
+           if (commandResult && commandResult !== 'send') {
              onMessage?.('');
           }
           stopListening();
