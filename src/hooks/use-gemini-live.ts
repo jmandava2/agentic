@@ -25,7 +25,6 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState('');
-  const [isConnected, setIsConnected] = useState(false);
 
   const { toast } = useToast();
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -61,42 +60,37 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     } else {
         setIsSpeaking(false);
     }
-
   }, [isSpeaking]);
-  
-  const stopRecording = useCallback(() => {
-    if (!geminiApiRef.current) return;
-    geminiApiRef.current.stopRecording();
-    if(sourceNodeRef.current) {
-        sourceNodeRef.current.stop();
-    }
-    audioQueueRef.current = [];
-    setIsListening(false);
-    setIsSpeaking(false);
-    setIsConnected(false);
+
+  const handleOpen = useCallback(() => {
+    setIsListening(true);
   }, []);
 
+  const handleClose = useCallback(() => {
+    setIsListening(false);
+  }, []);
+  
   const handleMessage = useCallback((message: any) => {
-    if (message.transcript) {
-      setTranscript(message.transcript);
-      onTranscript?.(message.transcript);
+    if (message.text) {
+      const currentText = message.text();
+      setTranscript(currentText);
+      onTranscript?.(currentText);
     }
-    if (message.final) {
-      setFinalTranscript(message.final);
-      onFinalTranscript?.(message.final);
-      // Stop listening after a final response is received.
-      stopRecording();
-    }
+    
+    // In this new API, we don't get a clear 'final' event in the same way.
+    // We can infer it when we stop listening.
+    
     if (message.audio) {
-      const audioContext = audioContextRef.current;
-      if (audioContext) {
-        audioContext.decodeAudioData(message.audio).then((decodedData) => {
-          audioQueueRef.current.push(decodedData);
-          processAudioQueue();
-        });
-      }
+        const audioContext = audioContextRef.current;
+        if (audioContext && message.audio.audioData) {
+            const audioData = new Uint8Array(message.audio.audioData).buffer;
+             audioContext.decodeAudioData(audioData).then((decodedData) => {
+                audioQueueRef.current.push(decodedData);
+                processAudioQueue();
+            }).catch(e => console.error("Error decoding audio data", e));
+        }
     }
-  }, [onTranscript, onFinalTranscript, processAudioQueue, stopRecording]);
+  }, [onTranscript, processAudioQueue]);
 
   const handleError = useCallback((error: any) => {
     console.error('Gemini Live Error:', error);
@@ -107,7 +101,6 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     })
     onError?.(error);
     setIsListening(false);
-    setIsConnected(false);
   }, [onError, toast]);
 
 
@@ -129,37 +122,50 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     const options: GeminiLiveApiOptions = {
         onMessage: handleMessage,
         onError: handleError,
+        onOpen: handleOpen,
+        onClose: handleClose,
     }
     geminiApiRef.current = new GeminiLiveApi(options);
 
     return () => {
-      geminiApiRef.current?.disconnect();
+      geminiApiRef.current?.stopSession();
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
         audioContextRef.current.close();
       }
     };
-  }, [handleMessage, handleError, toast]);
+  }, [handleMessage, handleError, toast, handleOpen, handleClose]);
 
   const startRecording = useCallback(async () => {
     if (isListening || !geminiApiRef.current) return;
     setTranscript('');
     setFinalTranscript('');
-    setIsListening(true);
     
     try {
-        await geminiApiRef.current.startRecording();
-        setIsConnected(true);
+        await geminiApiRef.current.startSession();
     } catch(e) {
         handleError(e);
     }
   }, [isListening, handleError]);
 
+  const stopRecording = useCallback(() => {
+    if (!geminiApiRef.current) return;
+    geminiApiRef.current.stopSession();
+    if(sourceNodeRef.current) {
+        sourceNodeRef.current.stop();
+    }
+    audioQueueRef.current = [];
+    setIsSpeaking(false);
+    onFinalTranscript?.(transcript);
+
+  }, [transcript, onFinalTranscript]);
+
+
   const sendMessage = useCallback((message: string) => {
-    if (geminiApiRef.current && isConnected) {
+    if (geminiApiRef.current && isListening) {
       geminiApiRef.current.sendMessage(message);
       onSend?.(message);
     }
-  }, [isConnected, onSend]);
+  }, [isListening, onSend]);
 
   return {
     isListening,

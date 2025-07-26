@@ -9,8 +9,6 @@ import { Camera, Send, X } from 'lucide-react';
 import { useCamera } from '@/hooks/use-camera';
 import { useAttachment } from '@/hooks/use-attachment';
 import { useToast } from '@/hooks/use-toast';
-import { useEffect, useState } from 'react';
-
 
 type AssistantBarProps = {
     message: string;
@@ -19,27 +17,29 @@ type AssistantBarProps = {
     isSending: boolean;
     startListening: () => void;
     stopListening: () => void;
+    sendMessage: (message: string) => void;
 };
 
 
-export function AssistantBar({ message, setMessage, isListening, isSending, startListening, stopListening }: AssistantBarProps) {
+export function AssistantBar({ message, setMessage, isListening, isSending, startListening, stopListening, sendMessage }: AssistantBarProps) {
   const { isCameraOpen, openCamera } = useCamera();
   const { attachment, setAttachment } = useAttachment();
-  const { toast } = useToast();
 
   const handleSendMessage = () => {
     if (!message && !attachment) return;
-    // Mock sending message for text-only input for now
-    toast({
-      title: 'Message Sent (Mock)',
-      description: `Text: ${message || '(none)'}, Image: ${attachment ? 'Attached' : 'None'}`,
-    });
-    // The main voice logic will handle sending via stream
-    if (isListening) {
-      stopListening();
+    if (isListening && message) {
+        // If listening, the message is likely the transcript, don't send as text
+        stopListening();
+    } else if (message) {
+        sendMessage(message);
+        setMessage('');
     }
-    // setMessage(''); // Let the hook manage the message state
-    setAttachment(null);
+    
+    if (attachment) {
+      // TODO: Handle attachment sending
+      console.log("Attachment sending not implemented yet.");
+      setAttachment(null);
+    }
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {

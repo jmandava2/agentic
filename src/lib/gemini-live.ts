@@ -1,18 +1,23 @@
-// A client for the Gemini voice-to-voice API.
-// This is a proof-of-concept and not a production-ready client.
-// To use this, you will need to authenticate with Google Cloud and have the
-// necessary permissions to use the Gemini API.
 
-const WEBSOCKET_URL_BASE =
-  'wss://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:streamGenerateContent';
+'use client';
+
+import {
+  GoogleGenerativeAI,
+  HarmCategory,
+  HarmBlockThreshold,
+  Modality,
+} from '@google/genai';
 
 export type GeminiLiveApiOptions = {
   onMessage: (message: any) => void;
   onError: (error: any) => void;
+  onClose: () => void;
+  onOpen: () => void;
 };
 
 export class GeminiLiveApi {
-  private websocket: WebSocket | null = null;
+  private ai: GoogleGenerativeAI | null = null;
+  private session: any = null;
   private mediaStream: MediaStream | null = null;
   private mediaRecorder: MediaRecorder | null = null;
   private apiKey: string | null = null;
@@ -34,102 +39,93 @@ export class GeminiLiveApi {
     return data.apiKey;
   }
 
-  public async startRecording() {
-    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-        console.warn("Recording is already in progress.");
-        return;
+  public async startSession() {
+    if (this.session) {
+      console.warn('Session already in progress.');
+      return;
     }
-
     try {
-        this.apiKey = await this.getApiKey();
-        this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.apiKey = await this.getApiKey();
+      this.ai = new GoogleGenerativeAI(this.apiKey);
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-        const wsUrl = `${WEBSOCKET_URL_BASE}?key=${this.apiKey}&response_mime_type=audio/opus`;
-        this.websocket = new WebSocket(wsUrl);
+      this.session = await this.ai.getGenerativeModel({
+          model: 'gemini-1.5-flash-latest',
+        }).startChat({
+        history: [],
+        safetySettings: [
+          {
+            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+          },
+        ],
+        // @ts-ignore - This is a valid parameter for voice but not yet in the types
+        requestModalities: [Modality.AUDIO, Modality.TEXT],
+        responseModalities: [Modality.AUDIO, Modality.TEXT],
+      });
 
-        this.websocket.onopen = () => {
-            console.log('WebSocket connected. Sending initial configuration.');
-            // Send the initial configuration message once connected.
-            const initialConfig = {
-              model: 'models/gemini-1.5-flash-latest',
-              audio_config: {
-                audio_encoding: 'WEBM_OPUS',
-                sample_rate: 16000,
-              },
-            };
-            this.websocket!.send(JSON.stringify(initialConfig));
+      this.options.onOpen();
 
-            // Start the media recorder after the connection is open and configured
-            this.mediaRecorder = new MediaRecorder(this.mediaStream!, {
-              mimeType: 'audio/webm;codecs=opus',
-            });
+      this.mediaRecorder = new MediaRecorder(this.mediaStream, {
+        mimeType: 'audio/webm;codecs=opus',
+      });
 
-            this.mediaRecorder.ondataavailable = (event) => {
-              if (
-                event.data.size > 0 &&
-                this.websocket &&
-                this.websocket.readyState === WebSocket.OPEN
-              ) {
-                const reader = new FileReader();
-                reader.onload = () => {
-                  this.websocket!.send(
-                    JSON.stringify({
-                      audio: (reader.result as string).split(',')[1],
-                    })
-                  );
-                };
-                reader.readAsDataURL(event.data);
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0 && this.session) {
+          const reader = new FileReader();
+          reader.onload = async () => {
+            try {
+              const result = await this.session.sendMessageStream([
+                {
+                  audio: {
+                    mimeType: this.mediaRecorder!.mimeType,
+                    data: (reader.result as string).split(',')[1],
+                  },
+                },
+              ]);
+
+              for await (const chunk of result.stream) {
+                this.options.onMessage(chunk);
               }
-            };
+            } catch (error) {
+              this.options.onError(error);
+            }
+          };
+          reader.readAsDataURL(event.data);
+        }
+      };
 
-            this.mediaRecorder.start(200); // Send data every 200ms
-        };
-
-        this.websocket.onmessage = (event) => {
-            const message = JSON.parse(event.data);
-            this.options.onMessage(message);
-        };
-
-        this.websocket.onclose = () => {
-            console.log('WebSocket disconnected.');
-            this.websocket = null;
-        };
-
-        this.websocket.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            this.options.onError(error);
-        };
-
+      this.mediaRecorder.start(1000); // Send data every 1s
     } catch (error) {
-        console.error("Failed to start recording:", error);
-        this.options.onError(error);
+      this.options.onError(error);
     }
   }
 
-
-  public stopRecording() {
+  public stopSession() {
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
     }
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
     }
-    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-        this.websocket.close();
-    }
+    this.session = null;
+    this.mediaRecorder = null;
+    this.mediaStream = null;
+    this.options.onClose();
   }
 
-  public sendMessage(message: string) {
-    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-      this.websocket.send(
-        JSON.stringify({
-          parts: [{ text: message }],
-        })
-      );
+  public async sendMessage(message: string) {
+     if (!this.session) {
+        this.options.onError(new Error('Session not started.'));
+        return;
     }
-  }
-
-  public disconnect() {
-    this.stopRecording();
+    try {
+        const result = await this.session.sendMessageStream(message);
+        for await (const chunk of result.stream) {
+            this.options.onMessage(chunk);
+        }
+    } catch (error) {
+        this.options.onError(error);
+    }
   }
 }
