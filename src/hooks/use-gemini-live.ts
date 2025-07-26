@@ -71,23 +71,24 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     if (transcript) {
       onFinalTranscript?.(transcript);
     }
+    setTranscript('');
   }, [transcript, onFinalTranscript]);
 
   const handleMessage = useCallback(
     (message: any) => {
-      const modelTurn = message.serverContent?.modelTurn;
-      if (modelTurn) {
+      if (message.serverContent?.modelTurn) {
+        const modelTurn = message.serverContent.modelTurn;
         const textPart = modelTurn.parts.find((p: any) => p.text);
         if (textPart) {
           setTranscript(textPart.text);
           onTranscript?.(textPart.text);
         }
-
-        const audioPart = modelTurn.parts.find((p: any) => p.audio);
-        if (audioPart) {
+      }
+      
+      if (message.audio) {
           const audioContext = audioContextRef.current;
-          if (audioContext && audioPart.audioData) {
-            const audioData = new Uint8Array(audioPart.audioData).buffer;
+          if (audioContext && message.audio) {
+            const audioData = new Uint8Array(message.audio).buffer;
             audioContext
               .decodeAudioData(audioData)
               .then((decodedData) => {
@@ -96,7 +97,6 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
               })
               .catch((e) => console.error('Error decoding audio data', e));
           }
-        }
       }
     },
     [onTranscript, processAudioQueue]
@@ -112,7 +112,7 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
       toast({
         variant: 'destructive',
         title: 'Voice Error',
-        description: 'Something went wrong with the voice connection.',
+        description: error.message || 'Something went wrong with the voice connection.',
       });
       onError?.(error);
       setIsListening(false);
@@ -142,6 +142,8 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
       onClose: handleClose,
     };
     geminiApiRef.current = new GeminiLiveApi(options);
+    geminiApiRef.current.listenForCalls();
+
 
     return () => {
       geminiApiRef.current?.stopSession();
@@ -165,7 +167,7 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
       if (audioContextRef.current?.state === 'suspended') {
         await audioContextRef.current.resume();
       }
-      geminiApiRef.current.startSession();
+      await geminiApiRef.current.startSession();
     } catch (e) {
       handleError(e);
     }
@@ -179,14 +181,15 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     }
     audioQueueRef.current = [];
     setIsSpeaking(false);
-    onFinalTranscript?.(transcript);
-  }, [transcript, onFinalTranscript]);
+  }, []);
 
   const sendMessage = useCallback(
     (message: string) => {
-        console.warn("Sending text messages is not supported in this voice-only client.");
+        if (!geminiApiRef.current || !isListening) return;
+        geminiApiRef.current.sendMessage(message);
+        onSend?.(message);
     },
-    []
+    [isListening, onSend]
   );
 
   return {
