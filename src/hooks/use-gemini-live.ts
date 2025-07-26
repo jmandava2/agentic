@@ -22,6 +22,7 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
   const { toast } = useToast();
   const audioContextRef = useRef<AudioContext | null>(null);
   const geminiApiRef = useRef<GeminiLiveApi | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize audio context
   const initAudioContext = useCallback(async () => {
@@ -71,13 +72,16 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
   }, [initAudioContext, toast]);
 
   const handleMessage = useCallback((message: any) => {
-    console.log('Received message:', message);
+    console.log('Processing message:', message);
     
-    // Handle text responses
+    // Handle text responses from candidates
     if (message.candidates?.[0]?.content?.parts?.[0]?.text) {
       const text = message.candidates[0].content.parts[0].text;
+      console.log('Text response received:', text);
       setTranscript(text);
       onTranscript?.(text);
+      setIsListening(false); // Stop listening when we get a response
+      return;
     }
     
     // Handle server content (for live API)
@@ -85,37 +89,36 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
       const parts = message.serverContent.modelTurn.parts;
       for (const part of parts) {
         if (part.text) {
+          console.log('Server text response:', part.text);
           setTranscript(part.text);
           onTranscript?.(part.text);
+        }
+        
+        // Handle audio in the same loop
+        if (part.inlineData?.mimeType?.startsWith('audio/')) {
+          console.log('Audio response received');
+          setIsSpeaking(true);
+          playAudioResponse(part.inlineData.data);
         }
       }
     }
 
     // Handle turn completion
     if (message.serverContent?.turnComplete) {
+      console.log('Turn completed');
       setFinalTranscript(transcript);
       onFinalTranscript?.(transcript);
       setIsListening(false);
     }
-
-    // Handle audio responses
-    if (message.serverContent?.modelTurn?.parts) {
-      const parts = message.serverContent.modelTurn.parts;
-      for (const part of parts) {
-        if (part.inlineData?.mimeType?.startsWith('audio/')) {
-          setIsSpeaking(true);
-          playAudioResponse(part.inlineData.data);
-        }
-      }
-    }
     
     // Handle direct audio data
     if (message.audio || message.audioData) {
+      console.log('Direct audio data received');
       setIsSpeaking(true);
       const audioData = message.audio || message.audioData;
       playAudioResponse(audioData);
     }
-  }, [onTranscript, onFinalTranscript, transcript]);
+  }, [onTranscript, onFinalTranscript, transcript, playAudioResponse]);
 
   const handleError = useCallback((error: any) => {
     console.error('Gemini Live Error:', error);
@@ -138,6 +141,9 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
 
     return () => {
       geminiApiRef.current?.disconnect();
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
     };
   }, [handleMessage, handleError]);
 
@@ -151,13 +157,31 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     try {
       await geminiApiRef.current.startRecording();
       setIsConnected(true);
+      
+      // Auto-stop after 10 seconds to prevent infinite listening
+      timeoutRef.current = setTimeout(() => {
+        console.log('Auto-stopping recording after 10 seconds');
+        stopRecording();
+        toast({
+          title: 'Recording Timeout',
+          description: 'Recording stopped automatically. Try speaking closer to the microphone.'
+        });
+      }, 10000);
+      
     } catch (e) {
       handleError(e as Error);
     }
-  }, [isListening, handleError]);
+  }, [isListening, handleError, toast]);
 
   const stopRecording = useCallback(() => {
     if (!geminiApiRef.current) return;
+    
+    // Clear timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    
     geminiApiRef.current.stopRecording();
     setIsListening(false);
     setIsSpeaking(false);
