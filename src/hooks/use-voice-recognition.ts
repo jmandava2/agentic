@@ -1,4 +1,5 @@
-
+// This file is no longer needed and can be deleted.
+// The new `useGeminiLive` hook replaces its functionality.
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';

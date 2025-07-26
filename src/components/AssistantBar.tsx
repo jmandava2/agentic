@@ -10,43 +10,37 @@ import { useCamera } from '@/hooks/use-camera';
 import { useAttachment } from '@/hooks/use-attachment';
 import { useToast } from '@/hooks/use-toast';
 import { useEffect, useState } from 'react';
-import { cn } from '@/lib/utils';
-import { useVoiceRecognition } from '@/hooks/use-voice-recognition';
 
 
 type AssistantBarProps = {
     message: string;
     setMessage: (message: string) => void;
+    isListening: boolean;
     isSending: boolean;
-    setIsSending: (isSending: boolean) => void;
+    startListening: () => void;
+    stopListening: () => void;
 };
 
 
-export function AssistantBar({ message, setMessage, isSending, setIsSending }: AssistantBarProps) {
+export function AssistantBar({ message, setMessage, isListening, isSending, startListening, stopListening }: AssistantBarProps) {
   const { isCameraOpen, openCamera } = useCamera();
-  const { isListening } = useVoiceRecognition();
   const { attachment, setAttachment } = useAttachment();
   const { toast } = useToast();
 
   const handleSendMessage = () => {
     if (!message && !attachment) return;
-    // Mock sending message
+    // Mock sending message for text-only input for now
     toast({
       title: 'Message Sent (Mock)',
       description: `Text: ${message || '(none)'}, Image: ${attachment ? 'Attached' : 'None'}`,
     });
-    setMessage('');
+    // The main voice logic will handle sending via stream
+    if (isListening) {
+      stopListening();
+    }
+    // setMessage(''); // Let the hook manage the message state
     setAttachment(null);
   };
-
-  useEffect(() => {
-    if (isSending) {
-      handleSendMessage();
-      setIsSending(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSending]);
-
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -91,20 +85,24 @@ export function AssistantBar({ message, setMessage, isSending, setIsSending }: A
           )}
 
           <Input
-            placeholder="Ask anything"
+            placeholder="Ask anything or start speaking..."
             className="flex-grow border-0 bg-transparent shadow-none focus-visible:ring-0 truncate"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
           />
 
-          <VoiceButton />
+          <VoiceButton 
+            isListening={isListening}
+            startListening={startListening}
+            stopListening={stopListening}
+          />
 
           <Button
             variant="ghost"
             size="icon"
             onClick={handleSendMessage}
-            disabled={isListening || isCameraOpen}
+            disabled={isListening || isCameraOpen || isSending}
             className="h-8 w-8 flex-shrink-0 rounded-full bg-foreground text-primary transition-shadow hover:bg-foreground/90"
           >
             <Send className="h-4 w-4" />

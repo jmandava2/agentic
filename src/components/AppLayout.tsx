@@ -6,11 +6,11 @@ import { Sidebar, SidebarInset } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
 import { AssistantBar } from '@/components/AssistantBar';
 import { BottomNav } from '@/components/BottomNav';
-import { useVoiceRecognition } from '@/hooks/use-voice-recognition';
 import { VoiceOverlay } from './voice/VoiceOverlay';
 import { useCamera } from '@/hooks/use-camera';
 import { CameraOverlay } from './camera/CameraOverlay';
 import { AttachmentContext } from '@/hooks/use-attachment';
+import { useGeminiLive } from '@/hooks/use-gemini-live';
 
 function AttachmentProvider({ children }: { children: ReactNode }) {
   const [attachment, setAttachment] = useState<string | null>(null);
@@ -25,12 +25,16 @@ function AttachmentProvider({ children }: { children: ReactNode }) {
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState('');
-  const [isSending, setIsSending] = useState(false);
 
-  const { isListening, transcript, stopListening } = useVoiceRecognition({
-     onMessage: setMessage,
-     onSend: () => setIsSending(true),
+  const { isListening, transcript, isSpeaking, stopRecording, startRecording } = useGeminiLive({
+    onTranscript: setMessage,
+    onSend: (msg) => {
+        // In this new model, sending is part of the stream.
+        // We can update the final message here if needed.
+        setMessage(msg);
+    }
   });
+
   const { isCameraOpen, closeCamera } = useCamera();
 
 
@@ -43,14 +47,16 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <AssistantBar 
         message={message}
         setMessage={setMessage}
-        isSending={isSending}
-        setIsSending={setIsSending}
+        isListening={isListening}
+        isSending={isSpeaking}
+        startListening={startRecording}
+        stopListening={stopRecording}
       />
       <BottomNav />
       <VoiceOverlay
         isOpen={isListening}
         transcript={transcript}
-        onClose={stopListening}
+        onClose={stopRecording}
       />
       <CameraOverlay isOpen={isCameraOpen} onClose={closeCamera} />
     </AttachmentProvider>

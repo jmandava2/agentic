@@ -1,27 +1,17 @@
 
 'use client';
 import { Mic } from 'lucide-react';
-import { useVoiceRecognition } from '@/hooks/use-voice-recognition';
 import { cn } from '@/lib/utils';
-import { useToast } from '@/hooks/use-toast';
 import { Button } from '../ui/button';
 import { useCamera } from '@/hooks/use-camera';
 
-export function VoiceButton() {
-  const { toast } = useToast();
-  const {
-    isListening,
-    startListening,
-    stopListening,
-    hasRecognitionSupport,
-  } = useVoiceRecognition({
-    onNoSupport: () =>
-      toast({
-        variant: 'destructive',
-        title: 'Voice recognition not supported',
-        description: 'Your browser does not support voice commands.',
-      }),
-  });
+type VoiceButtonProps = {
+    isListening: boolean;
+    startListening: () => void;
+    stopListening: () => void;
+}
+
+export function VoiceButton({ isListening, startListening, stopListening }: VoiceButtonProps) {
   const { isCameraOpen } = useCamera();
 
   const handleToggleListening = () => {
@@ -31,10 +21,6 @@ export function VoiceButton() {
       startListening();
     }
   };
-
-  if (!hasRecognitionSupport) {
-    return null;
-  }
 
   return (
     <Button
