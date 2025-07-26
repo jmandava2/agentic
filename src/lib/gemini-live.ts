@@ -1,11 +1,10 @@
-
 // A client for the Gemini voice-to-voice API.
 // This is a proof-of-concept and not a production-ready client.
 // To use this, you will need to authenticate with Google Cloud and have the
 // necessary permissions to use the Gemini API.
 
-const WEBSOCKET_URL =
-  "wss://generativelanguage.googleapis.com/v1beta/models/gemini-live-2.5-flash-preview:streamGenerateContent?key=";
+const WEBSOCKET_URL_BASE =
+  "wss://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:streamGenerateContent";
 
 export type GeminiLiveApiOptions = {
     onMessage: (message: any) => void,
@@ -27,28 +26,11 @@ export class GeminiLiveApi {
         // In a real app, you would fetch this from a secure backend.
         // For this demo, we'll fetch it from a local endpoint.
         const res = await fetch('/api/gemini-api-key');
-        const { apiKey } = await res.json();
-        if (!apiKey) {
-            throw new Error('API key not found.');
+        const data = await res.json();
+        if (data.error || !data.apiKey) {
+            throw new Error(data.error || 'API key not found.');
         }
-        return apiKey;
-    }
-
-    private async setupSession(): Promise<any> {
-        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-live-2.5-flash-preview:generateContent', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': this.apiKey!,
-            },
-            body: JSON.stringify({
-                // Placeholder to create a session
-                contents: [{
-                    parts: [{ text: "Initialize" }]
-                }]
-            })
-        });
-        return res.json();
+        return data.apiKey;
     }
 
     public async connect() {
@@ -58,24 +40,14 @@ export class GeminiLiveApi {
 
         try {
             this.apiKey = await this.getApiKey();
-            // We don't need the session info, but this step might be necessary for auth in some setups
-            // const session = await this.setupSession(); 
-
-            const wsUrl = `${WEBSOCKET_URL}${this.apiKey}`;
+            
+            const wsUrl = `${WEBSOCKET_URL_BASE}?key=${this.apiKey}&response_mime_type=audio/opus`;
             
             this.websocket = new WebSocket(wsUrl);
 
             return new Promise<void>((resolve, reject) => {
                 this.websocket!.onopen = () => {
                     console.log('WebSocket connected.');
-                     // Send initial configuration
-                    this.websocket!.send(JSON.stringify({
-                        // "model": "models/gemini-pro", // This will be inferred by the endpoint
-                        "audio_config": {
-                            "audio_encoding": "WEBM_OPUS",
-                            "sample_rate_hertz": 16000
-                        }
-                    }));
                     resolve();
                 };
 
@@ -106,6 +78,12 @@ export class GeminiLiveApi {
             throw new Error('WebSocket not connected.');
         }
 
+        // Send initial configuration for the session
+        this.websocket.send(JSON.stringify({
+            model: "models/gemini-1.5-flash-latest",
+        }));
+
+
         this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         this.mediaRecorder = new MediaRecorder(this.mediaStream, {
             mimeType: 'audio/webm;codecs=opus'
@@ -116,7 +94,7 @@ export class GeminiLiveApi {
                 const reader = new FileReader();
                 reader.onload = () => {
                     this.websocket!.send(JSON.stringify({
-                        "audio_content": (reader.result as string).split(',')[1]
+                        "audio": (reader.result as string).split(',')[1]
                     }));
                 };
                 reader.readAsDataURL(event.data);
