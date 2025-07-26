@@ -50,6 +50,7 @@ export class GeminiLiveApi {
   private apiKey: string | null = null;
   private options: GeminiLiveApiOptions;
   private isRunning: boolean = false;
+  private session: any = null;
 
   constructor(options: GeminiLiveApiOptions) {
     this.options = options;
@@ -79,38 +80,63 @@ export class GeminiLiveApi {
       this.apiKey = await this.getApiKey();
       this.ai = new GoogleGenAI({ apiKey: this.apiKey });
 
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      this.options.onOpen();
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      this.mediaRecorder = new MediaRecorder(this.mediaStream, {
-        mimeType: 'audio/webm;codecs=opus',
-      });
-      this.mediaRecorder.start(1000);
-
-      const model = this.ai.getGenerativeModel({
-        model: 'models/gemini-live-2.5-flash-preview',
-        safetySettings: [
+      const config = {
+        responseModalities: [Modality.TEXT, Modality.AUDIO],
+         safetySettings: [
           {
             category: HarmCategory.HARM_CATEGORY_HARASSMENT,
             threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
           },
+          {
+            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
         ],
+      };
+      
+      const callbacks = {
+          onopen: () => {
+            this.options.onOpen();
+            this.mediaRecorder = new MediaRecorder(this.mediaStream!, {
+                mimeType: 'audio/webm;codecs=opus',
+            });
+            this.mediaRecorder.start(1000);
+            this.streamAudio();
+          },
+          onmessage: (message: any) => {
+            this.options.onMessage(message);
+          },
+          onerror: (error: any) => {
+            this.options.onError(error);
+          },
+          onclose: (event: any) => {
+            this.stopSession();
+          }
+      };
+
+      this.session = await this.ai.live.connect({
+        model: 'gemini-live-2.5-flash-preview',
+        config: config,
+        callbacks: callbacks
       });
 
-      const contents = audioStreamGenerator(this.mediaRecorder);
-      const result = await model.generateContent({ contents });
-
-      for await (const chunk of result.stream) {
-        this.options.onMessage(chunk);
-      }
 
     } catch (error) {
       this.options.onError(error);
-    } finally {
-        this.stopSession();
+      this.stopSession();
     }
+  }
+
+  private async streamAudio() {
+    if (!this.mediaRecorder || !this.session) return;
+    
+    this.mediaRecorder.ondataavailable = async (event) => {
+        if (event.data.size > 0 && this.session) {
+            this.session.sendAudio({data: event.data});
+        }
+    };
   }
 
   public stopSession() {
@@ -120,18 +146,19 @@ export class GeminiLiveApi {
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
     }
+    if (this.session) {
+      this.session.close();
+    }
     if (this.isRunning) {
         this.options.onClose();
     }
     this.isRunning = false;
     this.mediaRecorder = null;
     this.mediaStream = null;
+    this.session = null;
   }
 
   public async sendMessage(message: string) {
-    // In a true duplex stream, sending a text message while audio is streaming
-    // is complex. For now, this implementation focuses on voice-in, voice-out.
-    // A more advanced implementation might queue this message or restart the stream.
     console.warn("Sending text messages during an active audio stream is not yet implemented.", message);
   }
 }

@@ -61,7 +61,7 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
         setIsSpeaking(false);
     }
   }, [isSpeaking]);
-
+  
   const stopRecording = useCallback(() => {
     if (!geminiApiRef.current) return;
     geminiApiRef.current.stopSession();
@@ -80,18 +80,15 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
 
   const handleClose = useCallback(() => {
     setIsListening(false);
-    // When the session is closed by the API or an error, we can treat the last transcript as final.
     if(transcript) {
       onFinalTranscript?.(transcript);
     }
   }, [transcript, onFinalTranscript]);
   
   const handleMessage = useCallback((message: any) => {
-      // The streaming response can have text and audio.
       if (message.text) {
-        const currentText = message.text();
-        setTranscript(currentText);
-        onTranscript?.(currentText);
+        setTranscript(message.text);
+        onTranscript?.(message.text);
       }
       
       if (message.audio) {
@@ -144,7 +141,7 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     return () => {
       geminiApiRef.current?.stopSession();
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
+        audioContextRef.current.close().catch(console.error);
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
