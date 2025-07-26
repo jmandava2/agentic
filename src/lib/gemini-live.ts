@@ -5,7 +5,7 @@ import {
   GoogleGenAI,
   HarmCategory,
   HarmBlockThreshold,
-  Modality,
+  Part,
 } from '@google/genai';
 
 export type GeminiLiveApiOptions = {
@@ -15,6 +15,40 @@ export type GeminiLiveApiOptions = {
   onOpen: () => void;
 };
 
+async function* audioStreamGenerator(
+  mediaRecorder: MediaRecorder
+): AsyncGenerator<Part> {
+  let audioDataQueue: Blob[] = [];
+  let resolveAudioData: ((value: void) => void) | null = null;
+
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data.size > 0) {
+      audioDataQueue.push(event.data);
+      if (resolveAudioData) {
+        resolveAudioData();
+        resolveAudioData = null;
+      }
+    }
+  };
+
+  while (mediaRecorder.state === 'recording' || audioDataQueue.length > 0) {
+    if (audioDataQueue.length > 0) {
+      const blob = audioDataQueue.shift()!;
+      const audioData = await blob.arrayBuffer();
+      yield {
+        inlineData: {
+          data: Buffer.from(audioData).toString('base64'),
+          mimeType: mediaRecorder.mimeType,
+        },
+      };
+    } else {
+      await new Promise<void>((resolve) => {
+        resolveAudioData = resolve;
+      });
+    }
+  }
+}
+
 export class GeminiLiveApi {
   private ai: GoogleGenAI | null = null;
   private mediaStream: MediaStream | null = null;
@@ -22,7 +56,7 @@ export class GeminiLiveApi {
   private apiKey: string | null = null;
   private options: GeminiLiveApiOptions;
   private isRunning: boolean = false;
-  private session: any = null;
+  private stopController: AbortController | null = null;
 
   constructor(options: GeminiLiveApiOptions) {
     this.options = options;
@@ -47,85 +81,80 @@ export class GeminiLiveApi {
       console.warn('Session already in progress.');
       return;
     }
+
     this.isRunning = true;
+    this.stopController = new AbortController();
+    this.options.onOpen();
+
     try {
       this.apiKey = await this.getApiKey();
       this.ai = new GoogleGenAI({ apiKey: this.apiKey });
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
 
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.mediaRecorder = new MediaRecorder(this.mediaStream, {
+        mimeType: 'audio/webm;codecs=opus',
+      });
+      this.mediaRecorder.start(1000);
 
-      const config = {
-        responseModalities: [Modality.TEXT, Modality.AUDIO],
-         safetySettings: [
+      const model = this.ai.getGenerativeModel({
+        model: 'models/gemini-1.5-flash-latest',
+        safetySettings: [
           {
             category: HarmCategory.HARM_CATEGORY_HARASSMENT,
             threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
           },
-          {
-            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
         ],
-      };
-      
-      this.mediaRecorder = new MediaRecorder(this.mediaStream!, {
-          mimeType: 'audio/webm;codecs=opus',
-      });
-      
-      const callbacks = {
-          onopen: () => {
-            this.options.onOpen();
-            this.mediaRecorder!.ondataavailable = async (event) => {
-                if (event.data.size > 0 && this.session) {
-                    this.session.sendAudio({data: event.data});
-                }
-            };
-            this.mediaRecorder!.start(1000);
-          },
-          onmessage: (message: any) => {
-            this.options.onMessage(message);
-          },
-          onerror: (error: any) => {
-            this.options.onError(error);
-          },
-          onclose: (event: any) => {
-            this.stopSession();
-          }
-      };
-
-      this.session = await this.ai.live.connect({
-        model: 'gemini-live-2.5-flash-preview',
-        config: config,
-        callbacks: callbacks
       });
 
+      const stream = audioStreamGenerator(this.mediaRecorder);
+      const { stream: responseStream } = await model.generateContent({
+        contents: stream,
+      });
 
+      for await (const chunk of responseStream) {
+        if (this.stopController.signal.aborted) {
+          break;
+        }
+
+        const text = chunk.text?.();
+        const audioPart = chunk.candidates?.[0]?.content?.parts?.find(
+          (part) => part.audio
+        );
+
+        if (text || audioPart) {
+          this.options.onMessage({
+            text: text,
+            audio: audioPart?.audio,
+          });
+        }
+      }
     } catch (error) {
-      this.options.onError(error);
+      if ((error as Error).name !== 'AbortError') {
+        this.options.onError(error);
+      }
+    } finally {
       this.stopSession();
     }
   }
 
   public stopSession() {
+    if (!this.isRunning) return;
+
+    this.stopController?.abort();
+
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
     }
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
     }
-    if (this.session) {
-      this.session.close();
-    }
-    if (this.isRunning) {
-        this.options.onClose();
-    }
+
     this.isRunning = false;
     this.mediaRecorder = null;
     this.mediaStream = null;
-    this.session = null;
-  }
-
-  public async sendMessage(message: string) {
-    console.warn("Sending text messages during an active audio stream is not yet implemented.", message);
+    this.stopController = null;
+    this.options.onClose();
   }
 }
