@@ -90,7 +90,7 @@ export class GeminiLiveApi {
       this.mediaRecorder.start(1000);
 
       const model = this.ai.getGenerativeModel({
-        model: 'models/gemini-1.5-flash-latest',
+        model: 'models/gemini-live-2.5-flash-preview',
         safetySettings: [
           {
             category: HarmCategory.HARM_CATEGORY_HARASSMENT,
