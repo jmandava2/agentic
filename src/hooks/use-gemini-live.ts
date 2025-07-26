@@ -34,6 +34,17 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
 
   const geminiApiRef = useRef<GeminiLiveApi | null>(null);
 
+  const stopRecording = useCallback(() => {
+    if (!isListening || !geminiApiRef.current) return;
+    geminiApiRef.current.stopRecording();
+    if(sourceNodeRef.current) {
+        sourceNodeRef.current.stop();
+    }
+    audioQueueRef.current = [];
+    setIsListening(false);
+    setIsSpeaking(false);
+  }, [isListening]);
+
   const processAudioQueue = useCallback(() => {
     if (isSpeaking || audioQueueRef.current.length === 0) {
       return;
@@ -140,18 +151,6 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
         handleError(e);
     }
   }, [isListening, handleError]);
-
-  const stopRecording = useCallback(() => {
-    if (!isListening || !geminiApiRef.current) return;
-    geminiApiRef.current.stopRecording();
-    if(sourceNodeRef.current) {
-        sourceNodeRef.current.stop();
-    }
-    audioQueueRef.current = [];
-    setIsListening(false);
-    setIsSpeaking(false);
-  }, [isListening]);
-
 
   const sendMessage = useCallback((message: string) => {
     if (geminiApiRef.current && isConnected) {
