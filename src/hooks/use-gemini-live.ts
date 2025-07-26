@@ -1,16 +1,8 @@
-
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { GeminiLiveApi, type GeminiLiveApiOptions } from '@/lib/gemini-live';
 import { useToast } from './use-toast';
-
-declare global {
-  interface Window {
-    AudioContext: typeof AudioContext;
-    webkitAudioContext: typeof AudioContext;
-  }
-}
 
 type UseGeminiLiveProps = {
   onTranscript?: (transcript: string) => void;
@@ -25,142 +17,82 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState('');
+  const [isConnected, setIsConnected] = useState(false);
 
   const { toast } = useToast();
   const audioContextRef = useRef<AudioContext | null>(null);
-  const audioQueueRef = useRef<AudioBuffer[]>([]);
-  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
-
   const geminiApiRef = useRef<GeminiLiveApi | null>(null);
 
-  const processAudioQueue = useCallback(() => {
-    if (isSpeaking || audioQueueRef.current.length === 0) {
-      return;
+  const handleMessage = useCallback((message: any) => {
+    console.log('Received message:', message);
+    
+    // Handle text responses
+    if (message.candidates?.[0]?.content?.parts?.[0]?.text) {
+      const text = message.candidates[0].content.parts[0].text;
+      setTranscript(text);
+      onTranscript?.(text);
+    }
+    
+    // Handle server content (for live API)
+    if (message.serverContent?.modelTurn?.parts) {
+      const parts = message.serverContent.modelTurn.parts;
+      for (const part of parts) {
+        if (part.text) {
+          setTranscript(part.text);
+          onTranscript?.(part.text);
+        }
+      }
     }
 
-    setIsSpeaking(true);
-    const audioContext = audioContextRef.current;
-    if (!audioContext) {
-      setIsSpeaking(false);
-      return;
-    }
-
-    const source = audioContext.createBufferSource();
-    sourceNodeRef.current = source;
-    const nextAudio = audioQueueRef.current.shift();
-
-    if (nextAudio) {
-      source.buffer = nextAudio;
-      source.connect(audioContext.destination);
-      source.onended = () => {
-        setIsSpeaking(false);
-        processAudioQueue();
-      };
-      source.start();
-    } else {
-      setIsSpeaking(false);
-    }
-  }, [isSpeaking]);
-
-  const handleOpen = useCallback(() => {
-    setIsListening(true);
-  }, []);
-
-  const handleClose = useCallback(() => {
-    setIsListening(false);
-    if (transcript) {
+    // Handle turn completion
+    if (message.serverContent?.turnComplete) {
+      setFinalTranscript(transcript);
       onFinalTranscript?.(transcript);
-    }
-    setTranscript('');
-  }, [transcript, onFinalTranscript]);
-
-  const handleMessage = useCallback(
-    (message: any) => {
-      if (message.serverContent?.modelTurn?.parts) {
-         const textPart = message.serverContent.modelTurn.parts.find((p: any) => p.text);
-        if (textPart) {
-          setTranscript(textPart.text);
-          onTranscript?.(textPart.text);
-        }
-      }
-      
-      if (message.audio) {
-          const audioContext = audioContextRef.current;
-          if (audioContext && message.audio) {
-            const audioData = new Uint8Array(message.audio).buffer;
-            audioContext
-              .decodeAudioData(audioData)
-              .then((decodedData) => {
-                audioQueueRef.current.push(decodedData);
-                processAudioQueue();
-              })
-              .catch((e) => console.error('Error decoding audio data', e));
-          }
-      }
-       if (message.serverContent?.turnComplete) {
-            setFinalTranscript(transcript);
-            onFinalTranscript?.(transcript);
-        }
-    },
-    [onTranscript, processAudioQueue, onFinalTranscript, transcript]
-  );
-
-  const handleError = useCallback(
-    (error: any) => {
-      if (error && error.message && error.message.includes('WebSocket')) {
-        return;
-      }
-      console.error('Gemini Live Error:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Voice Error',
-        description: error.message || 'Something went wrong with the voice connection.',
-      });
-      onError?.(error);
       setIsListening(false);
-    },
-    [onError, toast]
-  );
+    }
+
+    // Handle audio (simplified)
+    if (message.audio) {
+      setIsSpeaking(true);
+      // You can add audio playback logic here
+      setTimeout(() => setIsSpeaking(false), 2000);
+    }
+  }, [onTranscript, onFinalTranscript, transcript]);
+
+  const handleError = useCallback((error: any) => {
+    console.error('Gemini Live Error:', error);
+    toast({
+      variant: 'destructive',
+      title: 'Voice Error',
+      description: 'Something went wrong with the voice connection.'
+    });
+    onError?.(error);
+    setIsListening(false);
+    setIsConnected(false);
+  }, [onError, toast]);
 
   useEffect(() => {
-    if (!audioContextRef.current) {
-      try {
-        window.AudioContext = window.AudioContext || window.webkitAudioContext;
-        audioContextRef.current = new AudioContext();
-      } catch (e) {
-        console.error('AudioContext is not supported.', e);
-        toast({
-          variant: 'destructive',
-          title: 'Browser Not Supported',
-          description: 'Your browser does not support the Web Audio API.',
-        });
-      }
-    }
-
     const options: GeminiLiveApiOptions = {
       onMessage: handleMessage,
       onError: handleError,
-      onOpen: handleOpen,
-      onClose: handleClose,
     };
     geminiApiRef.current = new GeminiLiveApi(options);
-    
+
     return () => {
       geminiApiRef.current?.disconnect();
     };
-  }, [handleMessage, handleError, handleOpen, handleClose]);
+  }, [handleMessage, handleError]);
 
   const startRecording = useCallback(async () => {
     if (isListening || !geminiApiRef.current) return;
+    
     setTranscript('');
     setFinalTranscript('');
-    audioQueueRef.current = [];
-
+    setIsListening(true);
+    
     try {
-      if (audioContextRef.current?.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-      await geminiApiRef.current.startSession();
+      await geminiApiRef.current.startRecording();
+      setIsConnected(true);
     } catch (e) {
       handleError(e as Error);
     }
@@ -168,22 +100,18 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
 
   const stopRecording = useCallback(() => {
     if (!geminiApiRef.current) return;
-    geminiApiRef.current.stopSession();
-    if (sourceNodeRef.current) {
-      sourceNodeRef.current.stop();
-    }
-    audioQueueRef.current = [];
+    geminiApiRef.current.stopRecording();
+    setIsListening(false);
     setIsSpeaking(false);
+    setIsConnected(false);
   }, []);
 
-  const sendMessage = useCallback(
-    (message: string) => {
-        if (!geminiApiRef.current || !isListening) return;
-        geminiApiRef.current.sendMessage(message);
-        onSend?.(message);
-    },
-    [isListening, onSend]
-  );
+  const sendMessage = useCallback((message: string) => {
+    if (geminiApiRef.current && isConnected) {
+      geminiApiRef.current.sendMessage(message);
+      onSend?.(message);
+    }
+  }, [isConnected, onSend]);
 
   return {
     isListening,
