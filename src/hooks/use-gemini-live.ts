@@ -62,34 +62,48 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     }
   }, [isSpeaking]);
 
+  const stopRecording = useCallback(() => {
+    if (!geminiApiRef.current) return;
+    geminiApiRef.current.stopSession();
+    if(sourceNodeRef.current) {
+        sourceNodeRef.current.stop();
+    }
+    audioQueueRef.current = [];
+    setIsSpeaking(false);
+    onFinalTranscript?.(transcript);
+
+  }, [transcript, onFinalTranscript]);
+
   const handleOpen = useCallback(() => {
     setIsListening(true);
   }, []);
 
   const handleClose = useCallback(() => {
     setIsListening(false);
-  }, []);
+    // When the session is closed by the API or an error, we can treat the last transcript as final.
+    if(transcript) {
+      onFinalTranscript?.(transcript);
+    }
+  }, [transcript, onFinalTranscript]);
   
   const handleMessage = useCallback((message: any) => {
-    if (message.text) {
-      const currentText = message.text();
-      setTranscript(currentText);
-      onTranscript?.(currentText);
-    }
-    
-    // In this new API, we don't get a clear 'final' event in the same way.
-    // We can infer it when we stop listening.
-    
-    if (message.audio) {
-        const audioContext = audioContextRef.current;
-        if (audioContext && message.audio.audioData) {
-            const audioData = new Uint8Array(message.audio.audioData).buffer;
-             audioContext.decodeAudioData(audioData).then((decodedData) => {
-                audioQueueRef.current.push(decodedData);
-                processAudioQueue();
-            }).catch(e => console.error("Error decoding audio data", e));
-        }
-    }
+      // The streaming response can have text and audio.
+      if (message.text) {
+        const currentText = message.text();
+        setTranscript(currentText);
+        onTranscript?.(currentText);
+      }
+      
+      if (message.audio) {
+          const audioContext = audioContextRef.current;
+          if (audioContext && message.audio.audioData) {
+              const audioData = new Uint8Array(message.audio.audioData).buffer;
+               audioContext.decodeAudioData(audioData).then((decodedData) => {
+                  audioQueueRef.current.push(decodedData);
+                  processAudioQueue();
+              }).catch(e => console.error("Error decoding audio data", e));
+          }
+      }
   }, [onTranscript, processAudioQueue]);
 
   const handleError = useCallback((error: any) => {
@@ -133,7 +147,8 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
         audioContextRef.current.close();
       }
     };
-  }, [handleMessage, handleError, toast, handleOpen, handleClose]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startRecording = useCallback(async () => {
     if (isListening || !geminiApiRef.current) return;
@@ -141,24 +156,15 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
     setFinalTranscript('');
     
     try {
+        // Reset audio context if it's suspended
+        if(audioContextRef.current?.state === 'suspended') {
+          await audioContextRef.current.resume();
+        }
         await geminiApiRef.current.startSession();
     } catch(e) {
         handleError(e);
     }
   }, [isListening, handleError]);
-
-  const stopRecording = useCallback(() => {
-    if (!geminiApiRef.current) return;
-    geminiApiRef.current.stopSession();
-    if(sourceNodeRef.current) {
-        sourceNodeRef.current.stop();
-    }
-    audioQueueRef.current = [];
-    setIsSpeaking(false);
-    onFinalTranscript?.(transcript);
-
-  }, [transcript, onFinalTranscript]);
-
 
   const sendMessage = useCallback((message: string) => {
     if (geminiApiRef.current && isListening) {

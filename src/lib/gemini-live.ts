@@ -15,13 +15,41 @@ export type GeminiLiveApiOptions = {
   onOpen: () => void;
 };
 
+async function* audioStreamGenerator(mediaRecorder: MediaRecorder) {
+  let resolve: (value: Blob) => void;
+  let promise = new Promise<Blob>((r) => (resolve = r));
+
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data.size > 0) {
+      resolve(event.data);
+      promise = new Promise<Blob>((r) => (resolve = r));
+    }
+  };
+
+  while (mediaRecorder.state === 'recording') {
+    const data = await promise;
+    const reader = new FileReader();
+    const readerPromise = new Promise<string>((res) => {
+      reader.onload = () => res(reader.result as string);
+    });
+    reader.readAsDataURL(data);
+    const base64 = (await readerPromise).split(',')[1];
+    yield {
+      audio: {
+        mimeType: mediaRecorder.mimeType,
+        data: base64,
+      },
+    };
+  }
+}
+
 export class GeminiLiveApi {
   private ai: GoogleGenAI | null = null;
-  private session: any = null;
   private mediaStream: MediaStream | null = null;
   private mediaRecorder: MediaRecorder | null = null;
   private apiKey: string | null = null;
   private options: GeminiLiveApiOptions;
+  private isRunning: boolean = false;
 
   constructor(options: GeminiLiveApiOptions) {
     this.options = options;
@@ -30,7 +58,9 @@ export class GeminiLiveApi {
   private async getApiKey(): Promise<string> {
     const res = await fetch('/api/gemini-api-key');
     if (!res.ok) {
-      throw new Error(`Failed to fetch API key: ${res.status} ${res.statusText}`);
+      throw new Error(
+        `Failed to fetch API key: ${res.status} ${res.statusText}`
+      );
     }
     const data = await res.json();
     if (data.error || !data.apiKey) {
@@ -40,64 +70,46 @@ export class GeminiLiveApi {
   }
 
   public async startSession() {
-    if (this.session) {
+    if (this.isRunning) {
       console.warn('Session already in progress.');
       return;
     }
+    this.isRunning = true;
     try {
       this.apiKey = await this.getApiKey();
       this.ai = new GoogleGenAI({ apiKey: this.apiKey });
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      this.session = await this.ai.getGenerativeModel({
-          model: 'gemini-1.5-flash-latest',
-        }).startChat({
-        history: [],
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      this.options.onOpen();
+
+      this.mediaRecorder = new MediaRecorder(this.mediaStream, {
+        mimeType: 'audio/webm;codecs=opus',
+      });
+      this.mediaRecorder.start(1000);
+
+      const model = this.ai.getGenerativeModel({
+        model: 'models/gemini-1.5-flash-latest',
         safetySettings: [
           {
             category: HarmCategory.HARM_CATEGORY_HARASSMENT,
             threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
           },
         ],
-        // @ts-ignore - This is a valid parameter for voice but not yet in the types
-        requestModalities: [Modality.AUDIO, Modality.TEXT],
-        responseModalities: [Modality.AUDIO, Modality.TEXT],
       });
 
-      this.options.onOpen();
+      const contents = audioStreamGenerator(this.mediaRecorder);
+      const result = await model.generateContent({ contents });
 
-      this.mediaRecorder = new MediaRecorder(this.mediaStream, {
-        mimeType: 'audio/webm;codecs=opus',
-      });
+      for await (const chunk of result.stream) {
+        this.options.onMessage(chunk);
+      }
 
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && this.session) {
-          const reader = new FileReader();
-          reader.onload = async () => {
-            try {
-              const result = await this.session.sendMessageStream([
-                {
-                  audio: {
-                    mimeType: this.mediaRecorder!.mimeType,
-                    data: (reader.result as string).split(',')[1],
-                  },
-                },
-              ]);
-
-              for await (const chunk of result.stream) {
-                this.options.onMessage(chunk);
-              }
-            } catch (error) {
-              this.options.onError(error);
-            }
-          };
-          reader.readAsDataURL(event.data);
-        }
-      };
-
-      this.mediaRecorder.start(1000); // Send data every 1s
     } catch (error) {
       this.options.onError(error);
+    } finally {
+        this.stopSession();
     }
   }
 
@@ -108,24 +120,18 @@ export class GeminiLiveApi {
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
     }
-    this.session = null;
+    if (this.isRunning) {
+        this.options.onClose();
+    }
+    this.isRunning = false;
     this.mediaRecorder = null;
     this.mediaStream = null;
-    this.options.onClose();
   }
 
   public async sendMessage(message: string) {
-     if (!this.session) {
-        this.options.onError(new Error('Session not started.'));
-        return;
-    }
-    try {
-        const result = await this.session.sendMessageStream(message);
-        for await (const chunk of result.stream) {
-            this.options.onMessage(chunk);
-        }
-    } catch (error) {
-        this.options.onError(error);
-    }
+    // In a true duplex stream, sending a text message while audio is streaming
+    // is complex. For now, this implementation focuses on voice-in, voice-out.
+    // A more advanced implementation might queue this message or restart the stream.
+    console.warn("Sending text messages during an active audio stream is not yet implemented.", message);
   }
 }
