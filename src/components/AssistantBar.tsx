@@ -9,16 +9,24 @@ import { Camera, Send, X } from 'lucide-react';
 import { useCamera } from '@/hooks/use-camera';
 import { useAttachment } from '@/hooks/use-attachment';
 import { useToast } from '@/hooks/use-toast';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useVoiceRecognition } from '@/hooks/use-voice-recognition';
 
-export function AssistantBar() {
+
+type AssistantBarProps = {
+    message: string;
+    setMessage: (message: string) => void;
+    isSending: boolean;
+    setIsSending: (isSending: boolean) => void;
+};
+
+
+export function AssistantBar({ message, setMessage, isSending, setIsSending }: AssistantBarProps) {
   const { isCameraOpen, openCamera } = useCamera();
   const { isListening } = useVoiceRecognition();
   const { attachment, setAttachment } = useAttachment();
   const { toast } = useToast();
-  const [message, setMessage] = useState('');
 
   const handleSendMessage = () => {
     if (!message && !attachment) return;
@@ -30,6 +38,15 @@ export function AssistantBar() {
     setMessage('');
     setAttachment(null);
   };
+
+  useEffect(() => {
+    if (isSending) {
+      handleSendMessage();
+      setIsSending(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSending]);
+
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {

@@ -8,6 +8,8 @@ import { useCamera } from './use-camera';
 
 type UseVoiceRecognitionProps = {
   onNoSupport?: () => void;
+  onMessage?: (message: string) => void;
+  onSend?: () => void;
 };
 
 const navigationCommands: Record<string, string> = {
@@ -16,6 +18,7 @@ const navigationCommands: Record<string, string> = {
   'show me the dashboard': '/dashboard',
   'navigate to dashboard': '/dashboard',
   'go to market': '/market-advisory',
+  'open market': '/market-advisory',
   'open market advisory': '/market-advisory',
   'check prices': '/market-advisory',
   'navigate to market advisory': '/market-advisory',
@@ -26,17 +29,36 @@ const navigationCommands: Record<string, string> = {
   'sign out': '/',
 };
 
-const actionCommands: Record<string, (actions: { openCamera: () => void, toast: any }) => void> = {
-    'open camera': ({ openCamera }) => openCamera(),
-    'show camera': ({ openCamera }) => openCamera(),
-    'launch camera': ({ openCamera }) => openCamera(),
-    'go to profile': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
-    'my account': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
-    'open my account': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
-    'navigate to my account': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
+const actionCommands: Record<
+  string,
+  (actions: { openCamera: () => void; toast: any; onSend?: () => void }) => void
+> = {
+  'open camera': ({ openCamera }) => openCamera(),
+  'show camera': ({ openCamera }) => openCamera(),
+  'launch camera': ({ openCamera }) => openCamera(),
+  'send message': ({ onSend }) => onSend?.(),
+  'go to profile': ({ toast }) =>
+    toast({
+      title: 'Coming Soon',
+      description: 'The profile page is under construction.',
+    }),
+  'my account': ({ toast }) =>
+    toast({
+      title: 'Coming Soon',
+      description: 'The profile page is under construction.',
+    }),
+  'open my account': ({ toast }) =>
+    toast({
+      title: 'Coming Soon',
+      description: 'The profile page is under construction.',
+    }),
+  'navigate to my account': ({ toast }) =>
+    toast({
+      title: 'Coming Soon',
+      description: 'The profile page is under construction.',
+    }),
 };
 
-// Global state management for voice overlay
 const listeners = new Set<(state: boolean) => void>();
 let isListeningGlobally = false;
 
@@ -52,6 +74,7 @@ const setGlobalListening = (state: boolean) => {
 };
 
 export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
+  const { onNoSupport, onMessage, onSend } = props;
   const router = useRouter();
   const { toast } = useToast();
   const { openCamera } = useCamera();
@@ -63,15 +86,6 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
   const processCommand = useCallback(
     (command: string) => {
       const lowerCaseCommand = command.toLowerCase().trim();
-
-      const actionCommand = Object.keys(actionCommands).find((key) => 
-        lowerCaseCommand.includes(key)
-      );
-
-      if (actionCommand) {
-        actionCommands[actionCommand]({ openCamera, toast });
-        return;
-      }
 
       const navCommand = Object.keys(navigationCommands).find((key) =>
         lowerCaseCommand.includes(key)
@@ -86,18 +100,23 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
           }...`,
         });
         router.push(path);
-        return;
+        return true;
       }
-      
-      toast({
-        variant: 'destructive',
-        title: 'Command not recognized',
-        description: `Could not understand: "${command}"`,
-      });
+
+      const actionCommand = Object.keys(actionCommands).find((key) =>
+        lowerCaseCommand.includes(key)
+      );
+
+      if (actionCommand) {
+        actionCommands[actionCommand]({ openCamera, toast, onSend });
+        return true;
+      }
+
+      return false;
     },
-    [router, toast, openCamera]
+    [router, toast, openCamera, onSend]
   );
-  
+
   const stopListening = useCallback(() => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
@@ -107,11 +126,10 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
 
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListeningGlobally) {
-       setTranscript('');
+      setTranscript('');
       recognitionRef.current.start();
     }
   }, []);
-
 
   useEffect(() => {
     const SpeechRecognition =
@@ -120,25 +138,29 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
       setHasRecognitionSupport(true);
       const recognition = new SpeechRecognition();
       recognition.continuous = false;
-      recognition.lang = 'en-US'; 
-      recognition.interimResults = true; 
+      recognition.lang = 'en-US';
+      recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      
+
       recognition.onresult = (event: SpeechRecognitionEvent) => {
         let interimTranscript = '';
         let finalTranscript = '';
         for (let i = 0; i < event.results.length; i++) {
-            const transcriptChunk = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-                finalTranscript += transcriptChunk;
-            } else {
-                interimTranscript += transcriptChunk;
-            }
+          const transcriptChunk = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcriptChunk;
+          } else {
+            interimTranscript += transcriptChunk;
+          }
         }
-        setTranscript(interimTranscript || finalTranscript);
+        const currentTranscript = interimTranscript || finalTranscript;
+        setTranscript(currentTranscript);
 
         if (finalTranscript) {
-          processCommand(finalTranscript);
+          const commandProcessed = processCommand(finalTranscript);
+          if (!commandProcessed) {
+            onMessage?.(finalTranscript);
+          }
           stopListening();
         }
       };
@@ -166,9 +188,9 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
       recognitionRef.current = recognition;
     } else {
       setHasRecognitionSupport(false);
-      props.onNoSupport?.();
+      onNoSupport?.();
     }
-  }, [processCommand, props, stopListening, toast]);
+  }, [processCommand, onNoSupport, stopListening, toast, onMessage]);
 
   useEffect(() => {
     const listener = (state: boolean) => {

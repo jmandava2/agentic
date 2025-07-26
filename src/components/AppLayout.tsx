@@ -24,15 +24,28 @@ function AttachmentProvider({ children }: { children: ReactNode }) {
 
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const { isListening, transcript, stopListening } = useVoiceRecognition();
+  const [message, setMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+
+  const { isListening, transcript, stopListening } = useVoiceRecognition({
+     onMessage: setMessage,
+     onSend: () => setIsSending(true),
+  });
   const { isCameraOpen, closeCamera } = useCamera();
+
+
   return (
     <AttachmentProvider>
       <Sidebar variant="sidebar" collapsible="icon">
         <AppSidebar />
       </Sidebar>
       <SidebarInset className="p-4 md:p-6 pb-40 md:pb-24">{children}</SidebarInset>
-      <AssistantBar />
+      <AssistantBar 
+        message={message}
+        setMessage={setMessage}
+        isSending={isSending}
+        setIsSending={setIsSending}
+      />
       <BottomNav />
       <VoiceOverlay
         isOpen={isListening}
