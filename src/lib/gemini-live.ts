@@ -4,7 +4,7 @@
 // necessary permissions to use the Gemini API.
 
 const WEBSOCKET_URL_BASE =
-  "wss://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:streamGenerateContent";
+  "wss://generativelanguage.googleapis.com/v1beta/models/gemini-live-2.5-flash-preview:streamGenerateContent";
 
 export type GeminiLiveApiOptions = {
     onMessage: (message: any) => void,
@@ -32,6 +32,21 @@ export class GeminiLiveApi {
         }
         return data.apiKey;
     }
+    
+    private setupSession() {
+        if (!this.websocket) return;
+
+        const config = {
+            "model": "models/gemini-live-2.5-flash-preview",
+            "audio_config": {
+                "audio_encoding": "WEBM_OPUS",
+                "sample_rate": 16000
+            }
+        };
+
+        this.websocket.send(JSON.stringify(config));
+    }
+
 
     public async connect() {
         if (this.websocket) {
@@ -48,6 +63,7 @@ export class GeminiLiveApi {
             return new Promise<void>((resolve, reject) => {
                 this.websocket!.onopen = () => {
                     console.log('WebSocket connected.');
+                    this.setupSession();
                     resolve();
                 };
 
@@ -77,12 +93,6 @@ export class GeminiLiveApi {
         if (!this.websocket) {
             throw new Error('WebSocket not connected.');
         }
-
-        // Send initial configuration for the session
-        this.websocket.send(JSON.stringify({
-            model: "models/gemini-1.5-flash-latest",
-        }));
-
 
         this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         this.mediaRecorder = new MediaRecorder(this.mediaStream, {
