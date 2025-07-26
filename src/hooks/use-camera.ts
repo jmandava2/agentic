@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 const listeners = new Set<(state: boolean) => void>();
 let isCameraOpenGlobally = false;
@@ -25,8 +25,12 @@ export const useCamera = () => {
   const closeCamera = useCallback(() => {
     setGlobalCameraOpen(false);
   }, []);
+  
+  const toggleCamera = useCallback(() => {
+    setGlobalCameraOpen(!isCameraOpenGlobally);
+  }, []);
 
-  useState(() => {
+  useEffect(() => {
     const listener = (state: boolean) => {
       setIsCameraOpen(state);
     };
@@ -34,11 +38,12 @@ export const useCamera = () => {
     return () => {
       listeners.delete(listener);
     };
-  });
+  }, []);
 
   return {
     isCameraOpen,
     openCamera,
     closeCamera,
+    toggleCamera,
   };
 };

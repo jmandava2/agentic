@@ -4,12 +4,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useToast } from './use-toast';
+import { useCamera } from './use-camera';
 
 type UseVoiceRecognitionProps = {
   onNoSupport?: () => void;
 };
 
-const commands = {
+const navigationCommands: Record<string, string> = {
   'go to dashboard': '/dashboard',
   'open dashboard': '/dashboard',
   'show me the dashboard': '/dashboard',
@@ -22,7 +23,14 @@ const commands = {
   'sign out': '/',
 };
 
-type CommandKey = keyof typeof commands;
+const actionCommands: Record<string, (actions: { openCamera: () => void, toast: any }) => void> = {
+    'open camera': ({ openCamera }) => openCamera(),
+    'show camera': ({ openCamera }) => openCamera(),
+    'launch camera': ({ openCamera }) => openCamera(),
+    'go to profile': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
+    'my account': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
+    'open my account': ({ toast }) => toast({ title: 'Coming Soon', description: 'The profile page is under construction.' }),
+};
 
 // Global state management for voice overlay
 const listeners = new Set<(state: boolean) => void>();
@@ -42,6 +50,7 @@ const setGlobalListening = (state: boolean) => {
 export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
   const router = useRouter();
   const { toast } = useToast();
+  const { openCamera } = useCamera();
   const [isListening, setIsListening] = useState(isListeningGlobally);
   const [transcript, setTranscript] = useState('');
   const [hasRecognitionSupport, setHasRecognitionSupport] = useState(false);
@@ -49,12 +58,14 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
 
   const processCommand = useCallback(
     (command: string) => {
-      const foundCommand = Object.keys(commands).find((key) =>
-        command.includes(key)
-      ) as CommandKey | undefined;
+      const lowerCaseCommand = command.toLowerCase().trim();
 
-      if (foundCommand) {
-        const path = commands[foundCommand];
+      const navCommand = Object.keys(navigationCommands).find((key) =>
+        lowerCaseCommand.includes(key)
+      );
+
+      if (navCommand) {
+        const path = navigationCommands[navCommand];
         toast({
           title: 'Command Recognized',
           description: `Navigating to ${
@@ -62,25 +73,41 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
           }...`,
         });
         router.push(path);
-      } else {
-        toast({
-          variant: 'destructive',
-          title: 'Command not recognized',
-          description: `Could not understand: "${command}"`,
-        });
+        return;
       }
+      
+      const actionCommand = Object.keys(actionCommands).find((key) => 
+        lowerCaseCommand.includes(key)
+      );
+
+      if (actionCommand) {
+        actionCommands[actionCommand]({ openCamera, toast });
+        return;
+      }
+
+      toast({
+        variant: 'destructive',
+        title: 'Command not recognized',
+        description: `Could not understand: "${command}"`,
+      });
     },
-    [router, toast]
+    [router, toast, openCamera]
   );
   
   const stopListening = useCallback(() => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
-      // Directly update the state, don't wait for the 'onend' event.
-      // The onend event will still fire, but this makes the UI responsive.
       setGlobalListening(false);
     }
   }, []);
+
+  const startListening = useCallback(() => {
+    if (recognitionRef.current && !isListeningGlobally) {
+       setTranscript('');
+      recognitionRef.current.start();
+    }
+  }, []);
+
 
   useEffect(() => {
     const SpeechRecognition =
@@ -107,7 +134,7 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
         setTranscript(interimTranscript || finalTranscript);
 
         if (finalTranscript) {
-          processCommand(finalTranscript.toLowerCase().trim());
+          processCommand(finalTranscript);
           stopListening();
         }
       };
@@ -137,8 +164,7 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
       setHasRecognitionSupport(false);
       props.onNoSupport?.();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [processCommand, props, stopListening, toast]);
 
   useEffect(() => {
     const listener = (state: boolean) => {
@@ -149,13 +175,6 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
       listeners.delete(listener);
     };
   }, []);
-
-  const startListening = () => {
-    if (recognitionRef.current && !isListeningGlobally) {
-       setTranscript('');
-      recognitionRef.current.start();
-    }
-  };
 
   return {
     isListening,
