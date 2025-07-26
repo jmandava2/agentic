@@ -45,7 +45,8 @@ export class GeminiLiveApi {
       const { apiKey, error } = await res.json();
       if (error || !apiKey) throw new Error(error || 'API key not found');
 
-      this.ai = new GoogleGenAI(apiKey);
+      // Fix: Pass apiKey as object property
+      this.ai = new GoogleGenAI({ apiKey });
 
       // Check if live API is available
       if (!this.ai.live) {
@@ -55,7 +56,7 @@ export class GeminiLiveApi {
       // Connect to Gemini Live API
       this.session = await this.ai.live.connect(this.getConfig(), {
         onopen: async () => {
-          console.log('🔌 Gemini Live connected');
+          console.log('Gemini Live connected');
           this.isConnected = true;
           
           // Start streaming audio from the microphone
@@ -96,18 +97,18 @@ export class GeminiLiveApi {
         },
         
         onmessage: (message: any) => {
-          console.log('📨 Received:', message);
+          console.log('Received:', message);
           this.options.onMessage(message);
         },
         
         onerror: (error: any) => {
-          console.error('❌ Gemini Live error:', error);
+          console.error('Gemini Live error:', error);
           this.isConnected = false;
           this.options.onError(error);
         },
         
         onclose: (event: any) => {
-          console.log('🔌 Gemini Live disconnected:', event?.reason || 'Unknown reason');
+          console.log('Gemini Live disconnected:', event?.reason || 'Unknown reason');
           this.isConnected = false;
           this.session = undefined;
           this.stopRecording();
@@ -140,7 +141,7 @@ export class GeminiLiveApi {
       return;
     }
     
-    console.log('👤 Sending:', text);
+    console.log('Sending:', text);
     try {
       this.session.send({
         clientContent: {
