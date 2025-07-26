@@ -15,34 +15,6 @@ export type GeminiLiveApiOptions = {
   onOpen: () => void;
 };
 
-async function* audioStreamGenerator(mediaRecorder: MediaRecorder) {
-  let resolve: (value: Blob) => void;
-  let promise = new Promise<Blob>((r) => (resolve = r));
-
-  mediaRecorder.ondataavailable = (event) => {
-    if (event.data.size > 0) {
-      resolve(event.data);
-      promise = new Promise<Blob>((r) => (resolve = r));
-    }
-  };
-
-  while (mediaRecorder.state === 'recording') {
-    const data = await promise;
-    const reader = new FileReader();
-    const readerPromise = new Promise<string>((res) => {
-      reader.onload = () => res(reader.result as string);
-    });
-    reader.readAsDataURL(data);
-    const base64 = (await readerPromise).split(',')[1];
-    yield {
-      audio: {
-        mimeType: mediaRecorder.mimeType,
-        data: base64,
-      },
-    };
-  }
-}
-
 export class GeminiLiveApi {
   private ai: GoogleGenAI | null = null;
   private mediaStream: MediaStream | null = null;
@@ -96,14 +68,19 @@ export class GeminiLiveApi {
         ],
       };
       
+      this.mediaRecorder = new MediaRecorder(this.mediaStream!, {
+          mimeType: 'audio/webm;codecs=opus',
+      });
+      
       const callbacks = {
           onopen: () => {
             this.options.onOpen();
-            this.mediaRecorder = new MediaRecorder(this.mediaStream!, {
-                mimeType: 'audio/webm;codecs=opus',
-            });
-            this.mediaRecorder.start(1000);
-            this.streamAudio();
+            this.mediaRecorder!.ondataavailable = async (event) => {
+                if (event.data.size > 0 && this.session) {
+                    this.session.sendAudio({data: event.data});
+                }
+            };
+            this.mediaRecorder!.start(1000);
           },
           onmessage: (message: any) => {
             this.options.onMessage(message);
@@ -127,16 +104,6 @@ export class GeminiLiveApi {
       this.options.onError(error);
       this.stopSession();
     }
-  }
-
-  private async streamAudio() {
-    if (!this.mediaRecorder || !this.session) return;
-    
-    this.mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && this.session) {
-            this.session.sendAudio({data: event.data});
-        }
-    };
   }
 
   public stopSession() {
