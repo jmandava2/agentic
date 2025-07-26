@@ -10,8 +10,6 @@ import {
   ToolResponse,
   FunctionCall,
 } from '@google/genai';
-import { MediaRecorder, IMediaRecorder } from 'extendable-media-recorder';
-
 
 export type GeminiLiveApiOptions = {
   onMessage: (msg: any) => void;
@@ -24,25 +22,26 @@ export class GeminiLiveApi {
   private ai?: GoogleGenAI;
   private session?: LiveSession;
   private options: GeminiLiveApiOptions;
-  private mediaStream: MediaStream | null = null;
-  private mediaRecorder: IMediaRecorder | null = null;
   private responseQueue: any[] = [];
-  private isRunning: boolean = false;
-
+  private isConnected = false;
 
   constructor(opts: GeminiLiveApiOptions) {
     this.options = opts;
   }
 
-  /* ---------- private helpers ---------- */
-  private fnDeclarations() {
+  private getFunctionDeclarations() {
     return [
       {
         name: 'turn_on_the_lights',
         description: 'Turn on the lights in the room',
         parameters: {
           type: 'object',
-          properties: { room: { type: 'string' } },
+          properties: {
+            room: {
+              type: 'string',
+              description: 'The room to turn on lights in'
+            }
+          },
         },
         behavior: Behavior.NON_BLOCKING,
       },
@@ -51,7 +50,12 @@ export class GeminiLiveApi {
         description: 'Turn off the lights in the room',
         parameters: {
           type: 'object',
-          properties: { room: { type: 'string' } },
+          properties: {
+            room: {
+              type: 'string',
+              description: 'The room to turn off lights in'
+            }
+          },
         },
       },
       {
@@ -59,134 +63,135 @@ export class GeminiLiveApi {
         description: 'Get current weather for a location',
         parameters: {
           type: 'object',
-          properties: { location: { type: 'string' } },
+          properties: {
+            location: {
+              type: 'string',
+              description: 'City and state/country'
+            }
+          },
           required: ['location'],
         },
       },
     ];
   }
 
-  private cfg() {
+  private getConfig() {
     return {
       responseModalities: [Modality.TEXT, Modality.AUDIO],
       tools: [
-        { functionDeclarations: this.fnDeclarations() },
+        { functionDeclarations: this.getFunctionDeclarations() },
         { googleSearch: {} },
         { codeExecution: {} },
       ],
     };
   }
 
-  /* ---------- public API ---------- */
   async startSession() {
-    if (this.session || this.isRunning) return;
-    this.isRunning = true;
-    this.options.onOpen();
-
-    const { apiKey } = await fetch('/api/gemini-api-key').then((r) => r.json());
-    if (!apiKey) {
-      this.options.onError(new Error('API key missing'));
-      this.isRunning = false;
+    if (this.session && this.isConnected) {
+      console.warn("Already connected");
       return;
     }
 
-    this.ai = new GoogleGenAI({ apiKey });
-    
     try {
-        this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.options.onOpen();
+      const res = await fetch('/api/gemini-api-key');
+      if (!res.ok) throw new Error(`Failed to fetch API key: ${res.status}`);
+      
+      const { apiKey, error } = await res.json();
+      if (error || !apiKey) throw new Error(error || 'API key not found');
 
-        this.session = await this.ai.live.connect({
+      this.ai = new GoogleGenAI({ apiKey });
+
+      this.session = await this.ai.live.connect({
         model: 'gemini-2.0-flash-live-001',
-        config: this.cfg(),
+        config: this.getConfig(),
         callbacks: {
-            onopen: () => {
-                this.mediaRecorder = new MediaRecorder(this.mediaStream!, {
-                    mimeType: 'audio/webm;codecs=opus',
-                });
-                
-                this.mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0 && this.session) {
-                       this.session.sendAudio({ audio: new Uint8Array(event.data) });
-                    }
-                };
-                this.mediaRecorder.start(1000); // Send data every second
-            },
-            onmessage: (m) => {
-                this.responseQueue.push(m);
-                this.options.onMessage(m);
-            },
-            onerror: (err) => {
-                this.options.onError(err);
-                this.stopSession();
-            },
-            onclose: () => this.stopSession(),
+          onopen: () => {
+            console.log('🔌 Gemini Live connected');
+            this.isConnected = true;
+          },
+          onmessage: (message) => {
+            this.responseQueue.push(message);
+            this.options.onMessage(message);
+            
+            if (message.toolCall?.functionCalls?.length) {
+              this.handleFunctionCalls(message.toolCall.functionCalls);
+            }
+          },
+          onerror: (error) => {
+            console.error('❌ Gemini Live error:', error);
+            this.isConnected = false;
+            this.options.onError(error);
+          },
+          onclose: (event) => {
+            console.log('🔌 Gemini Live disconnected:', event.reason);
+            this.isConnected = false;
+            this.session = undefined;
+            this.options.onClose();
+          },
         },
-        });
+      });
+
     } catch (error) {
-        this.options.onError(error);
-        this.stopSession();
+      console.error('Failed to start Gemini Live:', error);
+      this.options.onError(error);
     }
   }
 
-  public stopSession() {
-    if (!this.isRunning) return;
-
-    this.session?.close();
-    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-      this.mediaRecorder.stop();
+  stopSession() {
+    if (this.session) {
+      this.session.close();
+      this.session = undefined;
+      this.isConnected = false;
     }
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((track) => track.stop());
-    }
-
-    this.session = undefined;
-    this.mediaRecorder = null;
-    this.mediaStream = null;
-    this.isRunning = false;
-    this.options.onClose();
   }
 
   sendMessage(text: string) {
-    if (!this.session) return;
+    if (!this.session || !this.isConnected) {
+      console.warn('Not connected to Gemini Live');
+      return;
+    }
+    
     this.session.sendClientContent({ text });
   }
 
-  /* optional: automatic function-response handler */
-  async listenForCalls() {
-    while (this.session) {
-      const msg = this.responseQueue.shift();
-      if (msg?.toolCall?.functionCalls?.length) {
-        const fns = await this.processFnCalls(msg.toolCall.functionCalls);
-        const resp: ToolResponse = { functionResponses: fns };
-        this.session.sendToolResponse(resp);
-      }
-      await new Promise((r) => setTimeout(r, 50));
+  private async handleFunctionCalls(functionCalls: FunctionCall[]) {
+    const functionResponses = await Promise.all(
+      functionCalls.map(async (fc) => {
+        let result;
+        
+        switch (fc.name) {
+          case 'turn_on_the_lights':
+            result = { status: "success", message: `Lights turned on in ${fc.args?.room}` };
+            break;
+          case 'turn_off_the_lights':
+            result = { status: "success", message: `Lights turned off in ${fc.args?.room}` };
+            break;
+          case 'get_weather':
+            result = { location: fc.args?.location, temp: "22°C", condition: "Sunny" };
+            break;
+          default:
+            result = { error: `Unknown function: ${fc.name}` };
+        }
+
+        return {
+          id: fc.id,
+          name: fc.name,
+          response: {
+            result,
+            scheduling: FunctionResponseScheduling.INTERRUPT,
+          },
+        };
+      })
+    );
+
+    if (this.session && this.isConnected) {
+      const toolResponse: ToolResponse = { functionResponses };
+      this.session.sendToolResponse(toolResponse);
     }
   }
 
-  private async processFnCalls(calls: FunctionCall[]) {
-    const out = [];
-    for (const c of calls) {
-      let result;
-      switch (c.name) {
-        case 'turn_on_the_lights':
-          result = { status: 'ok', message: `Lights on in ${c.args?.room}` };
-          break;
-        case 'turn_off_the_lights':
-          result = { status: 'ok', message: `Lights off in ${c.args?.room}` };
-          break;
-        case 'get_weather':
-          result = { location: c.args?.location, temp: '22 °C', condition: 'Sunny' };
-          break;
-        default:
-          result = { error: 'unknown function' };
-      }
-      out.push({
-        id: c.id,
-        name: c.name,
-        response: { result, scheduling: FunctionResponseScheduling.INTERRUPT },
-      });
-    }
-    return out;
+  disconnect() {
+    this.stopSession();
   }
 }

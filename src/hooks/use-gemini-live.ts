@@ -76,9 +76,8 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
 
   const handleMessage = useCallback(
     (message: any) => {
-      if (message.serverContent?.modelTurn) {
-        const modelTurn = message.serverContent.modelTurn;
-        const textPart = modelTurn.parts.find((p: any) => p.text);
+      if (message.serverContent?.modelTurn?.parts) {
+         const textPart = message.serverContent.modelTurn.parts.find((p: any) => p.text);
         if (textPart) {
           setTranscript(textPart.text);
           onTranscript?.(textPart.text);
@@ -98,14 +97,17 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
               .catch((e) => console.error('Error decoding audio data', e));
           }
       }
+       if (message.serverContent?.turnComplete) {
+            setFinalTranscript(transcript);
+            onFinalTranscript?.(transcript);
+        }
     },
-    [onTranscript, processAudioQueue]
+    [onTranscript, processAudioQueue, onFinalTranscript, transcript]
   );
 
   const handleError = useCallback(
     (error: any) => {
       if (error && error.message && error.message.includes('WebSocket')) {
-         // Silently ignore WebSocket closure errors that happen during normal operation
         return;
       }
       console.error('Gemini Live Error:', error);
@@ -142,20 +144,11 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
       onClose: handleClose,
     };
     geminiApiRef.current = new GeminiLiveApi(options);
-    geminiApiRef.current.listenForCalls();
-
-
+    
     return () => {
-      geminiApiRef.current?.stopSession();
-      if (
-        audioContextRef.current &&
-        audioContextRef.current.state !== 'closed'
-      ) {
-        // Don't close the context here, as it may be needed for queued audio
-      }
+      geminiApiRef.current?.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleMessage, handleError, handleOpen, handleClose]);
 
   const startRecording = useCallback(async () => {
     if (isListening || !geminiApiRef.current) return;
@@ -169,7 +162,7 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
       }
       await geminiApiRef.current.startSession();
     } catch (e) {
-      handleError(e);
+      handleError(e as Error);
     }
   }, [isListening, handleError]);
 
