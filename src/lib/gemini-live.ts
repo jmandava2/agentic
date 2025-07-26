@@ -2,7 +2,7 @@
 'use client';
 
 import {
-  GoogleGenerativeAI,
+  GoogleGenAI,
   HarmCategory,
   HarmBlockThreshold,
   Modality,
@@ -16,7 +16,7 @@ export type GeminiLiveApiOptions = {
 };
 
 export class GeminiLiveApi {
-  private ai: GoogleGenerativeAI | null = null;
+  private ai: GoogleGenAI | null = null;
   private session: any = null;
   private mediaStream: MediaStream | null = null;
   private mediaRecorder: MediaRecorder | null = null;
@@ -46,7 +46,7 @@ export class GeminiLiveApi {
     }
     try {
       this.apiKey = await this.getApiKey();
-      this.ai = new GoogleGenerativeAI(this.apiKey);
+      this.ai = new GoogleGenAI(this.apiKey);
       this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       this.session = await this.ai.getGenerativeModel({
