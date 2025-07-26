@@ -23,6 +23,53 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const geminiApiRef = useRef<GeminiLiveApi | null>(null);
 
+  // Initialize audio context
+  const initAudioContext = useCallback(async () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
+    return audioContextRef.current;
+  }, []);
+
+  // Play audio response from base64 data
+  const playAudioResponse = useCallback(async (audioData: string) => {
+    try {
+      const audioContext = await initAudioContext();
+      
+      // Convert base64 to array buffer
+      const binaryString = atob(audioData);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      // Decode audio data
+      const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
+      
+      // Create and play audio source
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+      
+      source.onended = () => {
+        setIsSpeaking(false);
+      };
+      
+      source.start(0);
+    } catch (error) {
+      console.error('Error playing audio response:', error);
+      setIsSpeaking(false);
+      toast({
+        variant: 'destructive',
+        title: 'Audio Error',
+        description: 'Failed to play audio response.'
+      });
+    }
+  }, [initAudioContext, toast]);
+
   const handleMessage = useCallback((message: any) => {
     console.log('Received message:', message);
     
@@ -51,11 +98,22 @@ export const useGeminiLive = (props: UseGeminiLiveProps = {}) => {
       setIsListening(false);
     }
 
-    // Handle audio (simplified)
-    if (message.audio) {
+    // Handle audio responses
+    if (message.serverContent?.modelTurn?.parts) {
+      const parts = message.serverContent.modelTurn.parts;
+      for (const part of parts) {
+        if (part.inlineData?.mimeType?.startsWith('audio/')) {
+          setIsSpeaking(true);
+          playAudioResponse(part.inlineData.data);
+        }
+      }
+    }
+    
+    // Handle direct audio data
+    if (message.audio || message.audioData) {
       setIsSpeaking(true);
-      // You can add audio playback logic here
-      setTimeout(() => setIsSpeaking(false), 2000);
+      const audioData = message.audio || message.audioData;
+      playAudioResponse(audioData);
     }
   }, [onTranscript, onFinalTranscript, transcript]);
 
