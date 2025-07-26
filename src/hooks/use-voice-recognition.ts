@@ -22,6 +22,7 @@ const navigationCommands: Record<string, string> = {
   'open market advisory': '/market-advisory',
   'check prices': '/market-advisory',
   'navigate to market advisory': '/market-advisory',
+  'navigate to market': '/market-advisory',
   'go to schemes': '/schemes',
   'open schemes': '/schemes',
   'navigate to schemes': '/schemes',
@@ -127,9 +128,10 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListeningGlobally) {
       setTranscript('');
+      onMessage?.('');
       recognitionRef.current.start();
     }
-  }, []);
+  }, [onMessage]);
 
   useEffect(() => {
     const SpeechRecognition =
@@ -155,11 +157,12 @@ export const useVoiceRecognition = (props: UseVoiceRecognitionProps = {}) => {
         }
         const currentTranscript = interimTranscript || finalTranscript;
         setTranscript(currentTranscript);
+        onMessage?.(currentTranscript);
 
         if (finalTranscript) {
           const commandProcessed = processCommand(finalTranscript);
-          if (!commandProcessed) {
-            onMessage?.(finalTranscript);
+          if (commandProcessed) {
+             onMessage?.('');
           }
           stopListening();
         }
